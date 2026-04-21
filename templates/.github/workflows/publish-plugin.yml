@@ -1,0 +1,196 @@
+# ─────────────────────────────────────────────────────────────────────────────
+#  NEXT GIS Plugin — Auto-publish workflow
+#
+#  Triggers:
+#   - Push a GitHub Release (recommended) → builds + submits to marketplace
+#   - Manual dispatch with version input
+#
+#  Required GitHub Secrets:
+#   NEXTGIS_API_KEY   — your developer API key from dev-portal.nextgis.io
+#   NEXTGIS_APP_SLUG  — your plugin slug (e.g. "wind-heatmap-pro")
+#
+#  Optional GitHub Secrets:
+#   NEXTGIS_PORTAL_URL — defaults to https://dev-portal.nextgis.io
+# ─────────────────────────────────────────────────────────────────────────────
+
+name: Publish to NEXT GIS Marketplace
+
+on:
+  release:
+    types: [published]
+
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g. 1.2.0)'
+        required: true
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, test, live]
+
+env:
+  NEXTGIS_PORTAL_URL: ${{ secrets.NEXTGIS_PORTAL_URL || 'https://dev-portal.nextgis.io' }}
+
+jobs:
+  # ── Job 1: Build the plugin bundle ─────────────────────────────────────────
+  build:
+    name: Build plugin bundle
+    runs-on: ubuntu-latest
+
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      bundle_url: ${{ steps.upload.outputs.bundle_url }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            VERSION="${VERSION#v}"   # strip leading 'v'
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Publishing version: $VERSION"
+
+      - name: Build bundle
+        run: npm run build
+        env:
+          VITE_VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Verify bundle exists
+        run: |
+          if [ ! -f dist/index.js ]; then
+            echo "❌ dist/index.js not found after build"
+            exit 1
+          fi
+          SIZE=$(wc -c < dist/index.js)
+          echo "✓ Bundle size: ${SIZE} bytes"
+
+      - name: Upload bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-bundle
+          path: dist/index.js
+          retention-days: 30
+
+      # Optional: upload to GitHub Release assets
+      - name: Attach bundle to release
+        if: github.event_name == 'release'
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: dist/index.js
+          asset_name: plugin.js
+          asset_content_type: application/javascript
+
+      - name: Set bundle URL
+        id: upload
+        run: |
+          REPO="${{ github.repository }}"
+          TAG="${{ github.event.release.tag_name || format('v{0}', steps.version.outputs.version) }}"
+          BUNDLE_URL="https://github.com/${REPO}/releases/download/${TAG}/plugin.js"
+          echo "bundle_url=$BUNDLE_URL" >> $GITHUB_OUTPUT
+          echo "Bundle URL: $BUNDLE_URL"
+
+  # ── Job 2: Submit to NEXT GIS Marketplace ───────────────────────────────────
+  submit:
+    name: Submit to marketplace
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Checkout (for manifest)
+        uses: actions/checkout@v4
+
+      - name: Read plugin manifest
+        id: manifest
+        run: |
+          if [ -f nextgis.manifest.json ]; then
+            MANIFEST=$(cat nextgis.manifest.json)
+          else
+            MANIFEST="{\"auto\": true}"
+          fi
+          # Escape for JSON embedding
+          MANIFEST_ESCAPED=$(echo "$MANIFEST" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
+          echo "manifest=$MANIFEST_ESCAPED" >> $GITHUB_OUTPUT
+
+      - name: Get changelog
+        id: changelog
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            CHANGELOG=$(echo "${{ github.event.release.body }}" | head -50)
+          else
+            CHANGELOG="Manual publish v${{ needs.build.outputs.version }}"
+          fi
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Submit version to NEXT GIS Marketplace
+        id: submit
+        run: |
+          RESPONSE=$(curl -sf -X POST \
+            "${{ env.NEXTGIS_PORTAL_URL }}/api/v1/marketplace/apps/${{ secrets.NEXTGIS_APP_SLUG }}/versions" \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: ${{ secrets.NEXTGIS_API_KEY }}" \
+            -d '{
+              "version":    "${{ needs.build.outputs.version }}",
+              "bundle_url": "${{ needs.build.outputs.bundle_url }}",
+              "changelog":  "${{ steps.changelog.outputs.changelog }}",
+              "manifest":   ${{ steps.manifest.outputs.manifest }}
+            }' 2>&1) || {
+            echo "❌ Submission failed"
+            echo "$RESPONSE"
+            exit 1
+          }
+
+          echo "✅ Submitted successfully"
+          echo "$RESPONSE" | python3 -m json.tool || echo "$RESPONSE"
+
+          VERSION_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null || echo "")
+          echo "version_id=$VERSION_ID" >> $GITHUB_OUTPUT
+
+      - name: Auto-promote to dev
+        if: >
+          success() &&
+          (github.event_name == 'release' ||
+           (github.event_name == 'workflow_dispatch' && inputs.environment == 'dev'))
+        run: |
+          curl -sf -X POST \
+            "${{ env.NEXTGIS_PORTAL_URL }}/api/v1/marketplace/apps/${{ secrets.NEXTGIS_APP_SLUG }}/promote?env=dev" \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: ${{ secrets.NEXTGIS_API_KEY }}" \
+            -d '{"version_id": "${{ steps.submit.outputs.version_id }}", "notes": "Auto-promoted by CI"}' \
+            && echo "✅ Auto-promoted to dev" \
+            || echo "⚠️ Auto-promotion to dev failed (version may need manual approval first)"
+
+      - name: Summary
+        run: |
+          echo "## 🚀 NEXT GIS Plugin Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Plugin | \`${{ secrets.NEXTGIS_APP_SLUG }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | \`${{ needs.build.outputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Bundle | [plugin.js](${{ needs.build.outputs.bundle_url }}) |" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | Pending review ⏳ |" >> $GITHUB_STEP_SUMMARY
+          echo "| Portal | [${{ env.NEXTGIS_PORTAL_URL }}](${{ env.NEXTGIS_PORTAL_URL }}) |" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,29 @@
+{
+  "name": "@nextgis/plugin-sdk",
+  "version": "1.0.0",
+  "description": "NEXT GIS Plugin SDK — build custom map plugins for the NEXT GIS Platform",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch"
+  },
+  "keywords": ["nextgis", "gis", "plugin", "sdk", "maplibre"],
+  "license": "MIT",
+  "peerDependencies": {
+    "react": "^18.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "tsup": "^8.0.2"
+  }
+}

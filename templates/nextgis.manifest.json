@@ -1,0 +1,21 @@
+{
+  "id": "com.your-org.your-plugin",
+  "name": "Your Plugin Name",
+  "version": "1.0.0",
+  "type": "map-plugin",
+  "permissions": [
+    "map:layers:read",
+    "map:layers:write",
+    "api:features:read",
+    "ui:panel"
+  ],
+  "ui": {
+    "sidebar_panel": true,
+    "toolbar_button": {
+      "icon": "Puzzle",
+      "tooltip": "My Plugin"
+    }
+  },
+  "nextgis_api_version": "^1.0",
+  "min_nextgis_ver": "1.2.0.0"
+}
