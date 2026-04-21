@@ -1,71 +1,135 @@
-# 🗺️ NEXT GIS — Guida per gli Sviluppatori
+# 🗺️ NEXT GIS — Developer Guide
 
-> Come creare, testare e pubblicare una **NEXT App** sulla piattaforma NEXT GIS.
-
----
-
-## Indice
-
-1. [Cos'è una NEXT App](#1-cosè-una-next-app)
-2. [Prerequisiti](#2-prerequisiti)
-3. [Creare la tua prima NEXT App](#3-creare-la-tua-prima-next-app)
-4. [Struttura del progetto](#4-struttura-del-progetto)
-5. [L'API del contesto](#5-lapi-del-contesto)
-6. [Testare in locale](#6-testare-in-locale)
-7. [Pubblicare in DEV](#7-pubblicare-in-dev)
-8. [Promuovere in TEST](#8-promuovere-in-test)
-9. [Andare LIVE](#9-andare-live)
-10. [CI/CD automatico con GitHub Actions](#10-cicd-automatico-con-github-actions)
-11. [FAQ](#11-faq)
+> How to build, test and publish a **NEXT App** on the NEXT GIS Platform.
 
 ---
 
-## 1. Cos'è una NEXT App
+## Table of Contents
 
-Una **NEXT App** (o plugin) è un modulo JavaScript/TypeScript che estende le funzionalità della piattaforma NEXT GIS. Può:
+1. [What is a NEXT App](#1-what-is-a-next-app)
+2. [How the DEV / TEST / LIVE pipeline works](#2-how-the-dev--test--live-pipeline-works)
+3. [Prerequisites](#3-prerequisites)
+4. [Create your first NEXT App](#4-create-your-first-next-app)
+5. [Project structure](#5-project-structure)
+6. [Context API reference](#6-context-api-reference)
+7. [Test locally](#7-test-locally)
+8. [Publish to DEV](#8-publish-to-dev)
+9. [Promote to TEST](#9-promote-to-test)
+10. [Go LIVE](#10-go-live)
+11. [Automated CI/CD with GitHub Actions](#11-automated-cicd-with-github-actions)
+12. [FAQ](#12-faq)
 
-- aggiungere layer personalizzati alla mappa
-- aprire pannelli laterali con UI propria
-- leggere e modificare dati GIS
-- accedere ai dati MNO (celle, siti radio)
-- integrarsi con l'autenticazione della piattaforma
+---
 
-Le app seguono un ciclo di vita controllato:
+## 1. What is a NEXT App
+
+A **NEXT App** (also called a plugin) is a JavaScript/TypeScript module that extends the NEXT GIS Platform. It can:
+
+- Add custom layers to the map
+- Open side panels with its own UI
+- Read and write GIS data
+- Access MNO data (cells, radio sites)
+- Integrate with platform authentication
+- Persist configuration in isolated storage
+
+Apps run inside a sandboxed context — they can only access the APIs they explicitly declare as permissions in their manifest.
+
+---
+
+## 2. How the DEV / TEST / LIVE pipeline works
+
+### Overview
+
+Every NEXT App goes through three promotion stages before reaching end users:
 
 ```
-sviluppo locale  →  DEV  →  TEST  →  LIVE
+Local development  →  DEV  →  TEST  →  LIVE
 ```
 
-Ogni promozione è deliberata e separata — un aggiornamento in DEV non impatta mai TEST o LIVE.
+Each promotion is **deliberate and independent** — pushing a new version to DEV never affects TEST or LIVE. You can have different versions active in different environments at the same time.
+
+### Environments are logical, not physical
+
+The DEV / TEST / LIVE environments are **logical stages managed by the marketplace**, not separate servers. All three environments run inside the same `marketplace-service` on the NEXT GIS production infrastructure:
+
+```
+NEXT GIS Platform (single server)
+    └── marketplace-service
+            │
+            ├── your-plugin
+            │       ├── DEV  → v1.1.0  ← you are testing this
+            │       ├── TEST → v1.0.0  ← under review by NEXT GIS team
+            │       └── LIVE → v0.9.0  ← visible to all users
+            │
+            └── another-plugin
+                    ├── DEV  → v2.0.0
+                    ├── TEST → —
+                    └── LIVE → v1.8.0
+```
+
+### What each environment means
+
+| Environment | Who can see the plugin | Purpose |
+|-------------|------------------------|---------|
+| **DEV** | Only you (via your API Key) | Build and test your integration with the live platform |
+| **TEST** | You + NEXT GIS team | Quality review before going public |
+| **LIVE** | All NEXT GIS users | Production — visible in the marketplace |
+
+> ⚠️ **Order is mandatory.** You cannot skip TEST and go directly from DEV to LIVE.
+
+### Who controls what
+
+| Action | Who can do it |
+|--------|--------------|
+| Submit a new version to DEV | Developer (API Key) |
+| Promote DEV → TEST | Developer (API Key) |
+| Review and approve the version | **NEXT GIS team only** |
+| Promote TEST → LIVE | Developer (after approval) |
+| Suspend / remove from LIVE | **NEXT GIS team only** |
+
+### What end users see
+
+The NEXT GIS marketplace **only shows LIVE plugins**. A plugin in DEV or TEST is completely invisible to regular users — only the developer who created it (via API Key) and the NEXT GIS team can see it during review.
+
+### Parallel versions example
+
+You can safely work on a new version while the previous one is still live:
+
+```
+DEV  → v2.0.0  ← you are actively developing
+TEST → v1.1.0  ← under review
+LIVE → v1.0.0  ← users are using this right now
+```
 
 ---
 
-## 2. Prerequisiti
+## 3. Prerequisites
 
-| Strumento | Versione minima |
-|-----------|----------------|
-| Node.js   | 18+            |
-| npm       | 9+             |
-| Git       | 2.x            |
-| Account GitHub | — |
+| Tool | Minimum version |
+|------|----------------|
+| Node.js | 18+ |
+| npm | 9+ |
+| Git | 2.x |
+| GitHub account | — |
 
-**Registrazione al Developer Portal:**
+**Register on the Developer Portal:**
 
-1. Vai su **[dev-portal.nextgis.io](https://dev-portal.nextgis.io)**
-2. Accedi con il tuo account GitHub
-3. Crea un'app dal menu **Submit Plugin** — conserva il tuo **API Key**
+1. Go to **[dev-portal.nextgis.io](https://dev-portal.nextgis.io)**
+2. Sign in with your GitHub account
+3. Create an app from the **Submit Plugin** menu
+4. Save your **API Key** — you will need it for publishing
 
 ---
 
-## 3. Creare la tua prima NEXT App
+## 4. Create your first NEXT App
 
-### 3.1 Installa l'SDK
+### 4.1 Install the SDK
 
 ```bash
 npm install @nextgis/plugin-sdk
 ```
 
-### 3.2 Crea il file principale
+### 4.2 Create the entry point
 
 ```typescript
 // src/index.ts
@@ -74,32 +138,29 @@ import { definePlugin } from '@nextgis/plugin-sdk';
 export default definePlugin({
 
   manifest: {
-    slug:        'mia-app',           // identificatore univoco, solo minuscole e trattini
-    name:        'La Mia App',
+    slug:        'my-app',            // unique identifier — lowercase, hyphens only
+    name:        'My App',
     version:     '1.0.0',
-    description: 'Descrizione breve visibile nel marketplace',
-    author:      'Mario Rossi',
-    homepage:    'https://github.com/tuo-user/mia-app',
+    description: 'Short description shown in the marketplace',
+    author:      'Your Name',
+    homepage:    'https://github.com/your-user/my-app',
     permissions: [
-      'map:read',    // legge lo stato della mappa
-      'map:write',   // aggiunge/rimuove layer
-      'ui:panel',    // apre pannelli laterali
+      'map:read',   // read map state
+      'map:write',  // add/remove layers
+      'ui:panel',   // open side panels
     ],
   },
 
-  // Chiamato quando l'utente installa/attiva il plugin
+  // Called when the user installs / enables the plugin
   async onLoad(ctx) {
 
-    // Aggiungi un layer alla mappa
+    // Add a layer to the map
     ctx.map.addLayer({
-      id:   'mia-app-layer',
+      id:   'my-app-layer',
       type: 'circle',
       source: {
         type: 'geojson',
-        data: {
-          type: 'FeatureCollection',
-          features: [],
-        },
+        data: { type: 'FeatureCollection', features: [] },
       },
       paint: {
         'circle-color':  '#e63946',
@@ -107,21 +168,21 @@ export default definePlugin({
       },
     });
 
-    // Mostra un messaggio all'utente
-    ctx.ui.showToast('Mia App caricata ✅');
+    // Show a toast message to the user
+    ctx.ui.showToast('My App loaded ✅');
 
-    // Reagisci ai click sulla mappa
+    // React to map clicks
     const unsub = ctx.map.onMapClick((e) => {
-      console.log('Click a', e.lngLat.lat, e.lngLat.lng);
+      console.log('Clicked at', e.lngLat.lat, e.lngLat.lng);
     });
 
-    // Restituisci una funzione di cleanup (chiamata su onUnload)
+    // Return a cleanup function (called on onUnload)
     return () => unsub();
   },
 
-  // Chiamato quando l'utente disattiva/disinstalla il plugin
+  // Called when the user disables / uninstalls the plugin
   onUnload() {
-    console.log('Mia App rimossa');
+    console.log('My App removed');
   },
 
 });
@@ -129,35 +190,35 @@ export default definePlugin({
 
 ---
 
-## 4. Struttura del progetto
+## 5. Project structure
 
 ```
-mia-app/
+my-app/
 ├── src/
-│   └── index.ts          ← entry point del plugin
-├── dist/                 ← bundle generato (non committare)
-├── nextgis.manifest.json ← manifest del plugin
+│   └── index.ts              ← plugin entry point
+├── dist/                     ← generated bundle (do not commit)
+├── nextgis.manifest.json     ← plugin manifest
 ├── package.json
 ├── tsconfig.json
 └── .github/
     └── workflows/
-        └── publish-plugin.yml  ← CI/CD automatico (opzionale)
+        └── publish-plugin.yml  ← optional CI/CD automation
 ```
 
 ### `nextgis.manifest.json`
 
 ```json
 {
-  "slug":        "mia-app",
-  "name":        "La Mia App",
+  "slug":        "my-app",
+  "name":        "My App",
   "version":     "1.0.0",
-  "description": "Descrizione breve visibile nel marketplace",
-  "author":      "Mario Rossi",
-  "homepage":    "https://github.com/tuo-user/mia-app",
+  "description": "Short description shown in the marketplace",
+  "author":      "Your Name",
+  "homepage":    "https://github.com/your-user/my-app",
   "permissions": ["map:read", "map:write", "ui:panel"],
   "ui": {
     "panel":      true,
-    "panelTitle": "La Mia App"
+    "panelTitle": "My App"
   }
 }
 ```
@@ -166,7 +227,7 @@ mia-app/
 
 ```json
 {
-  "name": "mia-app",
+  "name": "my-app",
   "version": "1.0.0",
   "scripts": {
     "build": "npx tsup src/index.ts --format esm --dts --minify",
@@ -182,279 +243,296 @@ mia-app/
 
 ---
 
-## 5. L'API del contesto
+## 6. Context API reference
 
-Il parametro `ctx` dentro `onLoad` espone tutte le API della piattaforma, filtrate in base alle **permissions** dichiarate nel manifest.
+The `ctx` parameter inside `onLoad` exposes all platform APIs, filtered by the **permissions** declared in your manifest. Calling an API without the required permission throws an error at runtime.
 
-### `ctx.map` — API Mappa *(richiede `map:read` / `map:write`)*
+### `ctx.map` — Map API *(requires `map:read` / `map:write`)*
 
 ```typescript
 ctx.map.flyTo({ center: [12.4964, 41.9028], zoom: 14 });
-ctx.map.getBounds();                        // restituisce i bounds correnti
+ctx.map.getBounds();
 ctx.map.addLayer({ id, type, source, paint });
-ctx.map.removeLayer('mia-app-layer');
-ctx.map.onMapClick((e) => { /* e.lngLat, e.features */ });
-ctx.map.onViewportChange((viewport) => { /* zoom, center, bounds */ });
+ctx.map.removeLayer('my-app-layer');
+
+// Event listeners — return an unsubscribe function
+const unsub1 = ctx.map.onMapClick((e) => { /* e.lngLat, e.features */ });
+const unsub2 = ctx.map.onViewportChange((viewport) => { /* zoom, center, bounds */ });
 ```
 
-### `ctx.features` — Query Feature *(richiede `data:read`)*
+### `ctx.features` — Feature query *(requires `data:read`)*
 
 ```typescript
 const features = await ctx.features.queryInBounds(ctx.map.getBounds());
 ```
 
-### `ctx.mno` — Dati MNO *(richiede `mno:read`)*
+### `ctx.mno` — MNO data *(requires `mno:read`)*
 
 ```typescript
 const cells = await ctx.mno.getCells({ bounds: ctx.map.getBounds() });
 const sites = await ctx.mno.getSites({ bounds: ctx.map.getBounds() });
 ```
 
-### `ctx.ui` — Interfaccia *(richiede `ui:panel`)*
+### `ctx.ui` — UI *(requires `ui:panel`)*
 
 ```typescript
-ctx.ui.showToast('Operazione completata');
-ctx.ui.openPanel('Il Mio Pannello');
+ctx.ui.showToast('Operation complete');
+ctx.ui.openPanel('My Panel');
 ctx.ui.closePanel();
 ```
 
-### `ctx.auth` — Utente corrente *(richiede `auth:read`)*
+### `ctx.auth` — Current user *(requires `auth:read`)*
 
 ```typescript
 const user = await ctx.auth.getUser();
 console.log(user.email, user.name);
 ```
 
-### `ctx.storage` — Storage locale *(richiede `storage:read` / `storage:write`)*
+### `ctx.storage` — Persistent storage *(requires `storage:read` / `storage:write`)*
 
 ```typescript
-await ctx.storage.set('config', { colore: '#ff0000' });
+await ctx.storage.set('config', { color: '#ff0000' });
 const config = await ctx.storage.get('config');
 await ctx.storage.remove('config');
 ```
 
-> **Nota:** ogni plugin ha il suo namespace di storage isolato — non può leggere i dati di altri plugin.
+> **Note:** each plugin has its own isolated storage namespace — it cannot read data from other plugins.
 
 ---
 
-## 6. Testare in locale
+## 7. Test locally
 
-### Build del bundle
+### Build the bundle
 
 ```bash
 npm run build
+# output: dist/index.mjs
 ```
 
-Il bundle viene generato in `dist/index.mjs`.
+### Serve the bundle locally
 
-### Hosting locale del bundle
-
-Il bundle deve essere raggiungibile via URL HTTP/HTTPS dalla piattaforma. Usa un server locale:
+The bundle must be reachable via a public URL. During local development use a local server:
 
 ```bash
-# Con npx
 npx serve dist --cors
-
-# Il bundle sarà disponibile a:
-# http://localhost:3000/index.mjs
+# bundle available at: http://localhost:3000/index.mjs
 ```
 
-### Installazione manuale in NEXT GIS
+### Install manually in NEXT GIS
 
-1. Apri **NEXT GIS** → sidebar → **Store**
-2. Scorri fino a **Installa da URL**
-3. Inserisci: `http://localhost:3000/index.mjs`
-4. Clicca **Installa** — il plugin si carica in tempo reale
+1. Open **NEXT GIS** → sidebar → **Store**
+2. Scroll to **Install from URL**
+3. Enter: `http://localhost:3000/index.mjs`
+4. Click **Install** — the plugin loads in real time
 
 ---
 
-## 7. Pubblicare in DEV
+## 8. Publish to DEV
 
-Quando il tuo plugin è pronto per essere testato sulla piattaforma:
+When your plugin is ready to be tested on the live platform:
 
-### 7.1 Fai il build di produzione
+### Step 1 — Production build
 
 ```bash
 npm run build
 ```
 
-### 7.2 Carica il bundle
+### Step 2 — Host the bundle
 
-Carica `dist/index.mjs` su un host pubblico (es. GitHub Releases, AWS S3, Cloudflare R2).
+Upload `dist/index.mjs` to a public host (GitHub Releases, AWS S3, Cloudflare R2, etc.).
 
-Esempio con GitHub Release:
+**Example using GitHub Releases:**
+
 ```bash
-# Crea un tag e release su GitHub
 git tag v1.0.0
 git push origin v1.0.0
-# Poi su GitHub: crea una Release e allega dist/index.mjs
-# URL bundle: https://github.com/tuo-user/mia-app/releases/download/v1.0.0/index.mjs
+# On GitHub: create a Release and attach dist/index.mjs as an asset
+# Bundle URL: https://github.com/your-user/my-app/releases/download/v1.0.0/index.mjs
 ```
 
-### 7.3 Invia al Developer Portal
+### Step 3 — Submit to the Developer Portal
 
-**Opzione A — Interfaccia web:**
+**Option A — Web UI:**
 
-1. Vai su **[dev-portal.nextgis.io](https://dev-portal.nextgis.io)** → **Submit Plugin**
-2. Compila il form:
-   - Nome, slug, descrizione, categoria
-   - Bundle URL: `https://...index.mjs`
-   - Versione, changelog
-3. Clicca **Invia** — il plugin è in stato `pending`
+1. Go to **[dev-portal.nextgis.io](https://dev-portal.nextgis.io)** → **Submit Plugin**
+2. Fill in: name, slug, description, category, bundle URL, version, changelog
+3. Click **Submit** — the plugin enters `pending` state
 
-**Opzione B — API diretta:**
+**Option B — REST API:**
 
 ```bash
 curl -X POST https://marketplace.nextgis.io/v1/marketplace/apps/{slug}/versions \
-  -H "X-API-Key: TUO_API_KEY" \
+  -H "X-API-Key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "version": "1.0.0",
+    "version":    "1.0.0",
     "bundle_url": "https://...index.mjs",
-    "changelog": "Prima versione",
-    "envs": ["dev"]
+    "changelog":  "Initial release",
+    "envs":       ["dev"]
   }'
 ```
 
-### 7.4 Promozione in DEV
+### Result
 
-Dopo l'invio, il plugin viene automaticamente promosso in **DEV**. Puoi verificarlo in:
+After submission the plugin is automatically promoted to **DEV**. Verify it in:
 
 **Developer Portal → Environments**
 
 ```
-DEV  ✅  v1.0.0    (attivo)
+DEV  ✅  v1.0.0    ← active, only visible to you
 TEST  —   —
 LIVE  —   —
 ```
 
 ---
 
-## 8. Promuovere in TEST
+## 9. Promote to TEST
 
-Quando hai verificato il plugin in DEV:
+Once you have verified your plugin in DEV, promote it to TEST for review by the NEXT GIS team.
 
 ### Via Developer Portal
 
 1. **Developer Portal → Environments**
-2. Nella card del tuo plugin → colonna **DEV** → pulsante **Promuovi a TEST**
-3. Seleziona la versione → **Promuovi**
+2. On your plugin card → **DEV** column → click **Promote to TEST**
+3. Select the version → **Promote**
 
 ### Via API
 
 ```bash
 curl -X POST https://marketplace.nextgis.io/v1/marketplace/apps/{slug}/promote?env=test \
-  -H "X-API-Key: TUO_API_KEY" \
+  -H "X-API-Key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "version_id": "ID_VERSIONE",
-    "notes": "Pronto per test interno"
+    "version_id": "VERSION_ID",
+    "notes":      "Ready for internal testing"
   }'
 ```
 
-**Dopo la promozione:**
+### After promotion
 
 ```
 DEV  ✅  v1.0.0
-TEST ✅  v1.0.0    ← ora attivo in TEST
+TEST ✅  v1.0.0    ← now under review by NEXT GIS team
 LIVE  —   —
 ```
 
-> ⚠️ L'ordine è obbligatorio: non è possibile promuovere direttamente in LIVE saltando TEST.
+**What happens next:**
+- The NEXT GIS team reviews your plugin for quality and security
+- You receive an email notification when the status changes
+- If approved → you can promote to LIVE
+- If rejected → you receive feedback, fix the issues, submit a new version to DEV
+
+> ⚠️ You cannot skip TEST and promote directly from DEV to LIVE.
 
 ---
 
-## 9. Andare LIVE
+## 10. Go LIVE
 
-La promozione in LIVE richiede che la versione sia già in TEST **e** che il team NEXT GIS abbia approvato il plugin (stato `approved`).
+A version can be promoted to LIVE only if it is already in TEST **and** has been approved by the NEXT GIS team (status: `approved`).
 
 ### Via Developer Portal
 
 1. **Developer Portal → Environments**
-2. Colonna **TEST** → pulsante **Promuovi a LIVE**
-3. Conferma → il plugin è visibile a tutti gli utenti NEXT GIS
+2. **TEST** column → click **Promote to LIVE**
+3. Confirm → the plugin is now visible to all NEXT GIS users
 
 ### Via API
 
 ```bash
 curl -X POST https://marketplace.nextgis.io/v1/marketplace/apps/{slug}/promote?env=live \
-  -H "X-API-Key: TUO_API_KEY" \
+  -H "X-API-Key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "version_id": "ID_VERSIONE",
-    "notes": "Release 1.0.0 stabile"
+    "version_id": "VERSION_ID",
+    "notes":      "Stable release 1.0.0"
   }'
 ```
 
-**Stato finale:**
+### Final state
 
 ```
 DEV  ✅  v1.0.0
 TEST ✅  v1.0.0
-LIVE ✅  v1.0.0   ← visibile a tutti gli utenti 🚀
+LIVE ✅  v1.0.0   ← visible to all users 🚀
+```
+
+### Rolling back
+
+If a LIVE version has a critical bug, you can re-promote any previous approved version from TEST without going through the full pipeline again:
+
+```bash
+curl -X POST https://marketplace.nextgis.io/v1/marketplace/apps/{slug}/promote?env=live \
+  -H "X-API-Key: YOUR_API_KEY" \
+  -d '{ "version_id": "PREVIOUS_VERSION_ID", "notes": "Rollback to v0.9.0" }'
 ```
 
 ---
 
-## 10. CI/CD automatico con GitHub Actions
+## 11. Automated CI/CD with GitHub Actions
 
-Copia il file `.github/workflows/publish-plugin.yml` nella tua repo per automatizzare tutto il processo:
+Copy `.github/workflows/publish-plugin.yml` from the SDK templates into your repo to automate the entire build and publish process:
 
 ```yaml
-# Si attiva ad ogni GitHub Release pubblicata
+# Triggers on every published GitHub Release
 on:
   release:
     types: [published]
 ```
 
-**Setup:**
+### Setup
 
-1. Vai su **Developer Portal → My Plugins** → copia il tuo **API Key**
-2. Nella tua repo GitHub → **Settings → Secrets → Actions**
-3. Aggiungi:
+1. Go to **Developer Portal → My Plugins** → copy your **API Key**
+2. In your GitHub repo → **Settings → Secrets → Actions**
+3. Add the following secrets:
 
-| Secret | Valore |
-|--------|--------|
-| `NEXTGIS_API_KEY` | Il tuo API Key dal Developer Portal |
-| `NEXTGIS_APP_SLUG` | Lo slug del tuo plugin (es. `mia-app`) |
+| Secret | Value |
+|--------|-------|
+| `NEXTGIS_API_KEY` | Your API Key from the Developer Portal |
+| `NEXTGIS_APP_SLUG` | Your plugin slug (e.g. `my-app`) |
 
-**Flusso automatico:**
+### Automated flow
 
 ```
 git tag v1.0.1 && git push origin v1.0.1
-      ↓  Crea Release su GitHub
+      ↓  Create a GitHub Release
 GitHub Actions:
-  1. npm run build
-  2. Allega bundle alla Release
+  1. npm ci && npm run build
+  2. Attach bundle to the GitHub Release
   3. POST /v1/marketplace/apps/{slug}/versions
-  4. Plugin promosso automaticamente in DEV ✅
+  4. Plugin automatically promoted to DEV ✅
 ```
 
-Trovi il template completo in:
-**[github.com/mauriziolarocca/nextgis-plugin-sdk/tree/main/templates/.github/workflows](https://github.com/mauriziolarocca/nextgis-plugin-sdk/tree/main/templates/.github/workflows)**
+Find the full template at:
+**[github.com/arimas-group/nextgis-plugin-sdk/tree/main/templates/.github/workflows](https://github.com/arimas-group/nextgis-plugin-sdk/tree/main/templates/.github/workflows)**
 
 ---
 
-## 11. FAQ
+## 12. FAQ
 
-**Q: Posso usare librerie esterne (React, Leaflet, ecc.)?**
-Sì, ma devono essere incluse nel bundle (`tsup` le include automaticamente). Attenzione alle dimensioni — bundle troppo grandi rallentano il caricamento.
+**Q: Can I use external libraries (React, Leaflet, etc.)?**
+Yes, but they must be bundled (`tsup` handles this automatically). Keep an eye on bundle size — large bundles slow down loading.
 
-**Q: Il mio plugin può comunicare con il mio backend?**
-Sì, puoi fare fetch verso il tuo server. Assicurati che il tuo backend supporti CORS per il dominio `nextgis.io`.
+**Q: Can my plugin communicate with my own backend?**
+Yes, you can fetch from your own server. Make sure your backend supports CORS for the `nextgis.io` domain.
 
-**Q: Cosa succede se publico una versione con un bug in LIVE?**
-Puoi promuovere una versione precedente da DEV o TEST. La piattaforma mantiene la storia di tutte le versioni.
+**Q: What happens if I publish a buggy version to LIVE?**
+You can roll back by re-promoting a previous approved version to LIVE immediately — no need to go through the full pipeline again.
 
-**Q: Posso avere più versioni in parallelo?**
-Ogni ambiente (DEV/TEST/LIVE) ha esattamente una versione attiva per volta. Puoi avere versioni diverse nei diversi ambienti.
+**Q: Can I have multiple versions in different environments at the same time?**
+Yes. Each environment (DEV / TEST / LIVE) has exactly one active version at a time, but they can all be different versions simultaneously.
 
-**Q: Come ricevo notifiche di review?**
-Il team NEXT GIS ti contatta via email (quella del tuo account GitHub) quando cambia lo stato del tuo plugin.
+**Q: How do I know when my plugin has been reviewed?**
+The NEXT GIS team will notify you by email (the address linked to your GitHub account) whenever the status of your plugin changes.
 
-**Q: Dove ottengo supporto?**
-- Documentazione: **[dev-portal.nextgis.io/docs](https://dev-portal.nextgis.io/docs)**
-- Issues SDK: **[github.com/mauriziolarocca/nextgis-plugin-sdk/issues](https://github.com/mauriziolarocca/nextgis-plugin-sdk/issues)**
+**Q: Can I test my DEV plugin without affecting my LIVE version?**
+Absolutely. DEV and LIVE are completely independent. Users on LIVE never see your DEV or TEST versions.
+
+**Q: What is the review criteria?**
+The NEXT GIS team checks: functionality, performance, security (no data exfiltration), declared permissions vs actual usage, and UI consistency with the platform.
+
+**Q: Where do I get support?**
+- Documentation: **[dev-portal.nextgis.io/docs](https://dev-portal.nextgis.io/docs)**
+- SDK issues: **[github.com/arimas-group/nextgis-plugin-sdk/issues](https://github.com/arimas-group/nextgis-plugin-sdk/issues)**
 - Email: **developers@nextgis.io**
 
 ---
